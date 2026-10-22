@@ -8,9 +8,6 @@
 #include <string.h>
 #include <unistd.h>
 
-int getdirentriesattr(int, struct attrlist *, void *, size_t, unsigned int *, unsigned int *,
-                      unsigned int *, unsigned int);
-
 int main(int argc, char **argv) {
     if (argc < 2) return 2;
     int fd = open(argv[1], O_RDONLY);

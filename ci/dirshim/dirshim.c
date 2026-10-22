@@ -58,7 +58,7 @@ static int load(int fd, struct attrlist *req, dirstate *s) {
     return 0;
 }
 
-static int shim_getdirentriesattr(int fd, struct attrlist *attrList, void *attrBuf, size_t attrBufSize,
+static int shim_getdirentriesattr(int fd, void *attrList, void *attrBuf, size_t attrBufSize,
                                   unsigned int *count, unsigned int *basep, unsigned int *newState,
                                   unsigned int options) {
     (void)options;
@@ -69,7 +69,7 @@ static int shim_getdirentriesattr(int fd, struct attrlist *attrList, void *attrB
     if (s->used && (s->dev != st.st_dev || s->ino != st.st_ino)) drop(s);
     if (!s->used) {
         s->used = 1; s->dev = st.st_dev; s->ino = st.st_ino;
-        if (load(fd, attrList, s) != 0) { int e = errno; drop(s); errno = e; return -1; }
+        if (load(fd, (struct attrlist *)attrList, s) != 0) { int e = errno; drop(s); errno = e; return -1; }
     }
     unsigned int want = *count, got = 0;
     size_t out = 0;
@@ -92,9 +92,6 @@ static int shim_close(int fd) {
     if (fd >= 0 && fd < MAXFD && states[fd].used) drop(&states[fd]);
     return close(fd);
 }
-
-extern int getdirentriesattr(int, struct attrlist *, void *, size_t, unsigned int *, unsigned int *,
-                             unsigned int *, unsigned int);
 
 __attribute__((used)) static struct { const void *repl; const void *orig; } interposers[]
     __attribute__((section("__DATA,__interpose"))) = {
