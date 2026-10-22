@@ -81,10 +81,9 @@ jobs:
           # The editor only registered the platform module inside the app bundle, so put iOS support there too.
           mv /Volumes/U/Unity/PlaybackEngines/iOSSupport /Volumes/U/Unity/Unity.app/Contents/PlaybackEngines/
           ln -s ../Unity.app/Contents/PlaybackEngines/iOSSupport /Volumes/U/Unity/PlaybackEngines/iOSSupport
-          ls /Volumes/U/Unity/Unity.app/Contents/PlaybackEngines/
-          for m in /Volumes/U/Unity/Unity.app/Contents/PlaybackEngines/*/; do
-            echo "==== $m"; ls "$m"; cat "$m/ivy.xml" 2>/dev/null | head -n 40
-          done
+          # Unity reads module="iPhone" as the BlackBerry target ("Setting BB10 ... iOSSupport") and skips it.
+          sed -i '' 's/module="iPhone"/module="iOS"/' /Volumes/U/Unity/Unity.app/Contents/PlaybackEngines/iOSSupport/ivy.xml
+          grep -o 'module="[^"]*"' /Volumes/U/Unity/Unity.app/Contents/PlaybackEngines/*/ivy.xml
           cp -R spike /Volumes/U/spike
           df -h /Volumes/U
 
