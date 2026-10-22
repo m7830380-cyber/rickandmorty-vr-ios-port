@@ -66,9 +66,24 @@ jobs:
           path: /Applications/Unity
           key: unity-${{ env.UNITY_VERSION }}-ios-${{ matrix.runner }}-v1
 
+      # Unity < 5.6 cannot list directories on APFS ("error getting directory contents Assets"), so Unity,
+      # the project and the build output all live on a case-insensitive HFS+ disk image.
+      - name: Mount HFS+ work volume
+        run: |
+          set -euo pipefail
+          hdiutil create -size 40g -type SPARSE -fs "Journaled HFS+" -volname U /tmp/u.sparseimage
+          hdiutil attach /tmp/u.sparseimage -mountpoint /Volumes/U -nobrowse
+          diskutil info /Volumes/U | grep -iE "File System Personality|Mount Point"
+          sudo ditto /Applications/Unity /Volumes/U/Unity
+          sudo rm -rf /Applications/Unity
+          sudo ln -s /Volumes/U/Unity /Applications/Unity
+          sudo chown -R "$(whoami)" /Volumes/U
+          cp -R spike /Volumes/U/spike
+          df -h /Volumes/U
+
       - name: Check Unity
         run: |
-          ls /Applications/Unity
+          ls /Applications/Unity/
           ls /Applications/Unity/PlaybackEngines || true
           file /Applications/Unity/Unity.app/Contents/MacOS/Unity
           /usr/libexec/PlistBuddy -c 'Print CFBundleVersion' /Applications/Unity/Unity.app/Contents/Info.plist || true
@@ -98,13 +113,12 @@ jobs:
           for d in "/Library/Application Support/Unity" "$HOME/Library/Unity" "$HOME/Library/Logs/Unity"; do
             sudo mkdir -p "$d"; sudo chown -R "$(whoami)" "$d"; sudo chmod -R 775 "$d"
           done
-          mkdir -p /tmp/activate-project
-          OK="License activated successfully|license is already valid|Successfully activated|LICENSE SYSTEM .*Valid"
+                    OK="License activated successfully|license is already valid|Successfully activated|LICENSE SYSTEM .*Valid"
           if [ -n "$UNITY_LICENSE" ]; then
             SERIAL=$(printf '%s' "$UNITY_LICENSE" | python3 -c "import sys,re,base64; d=re.search(r'<DeveloperData Value=\"([^\"]+)\"',sys.stdin.read()).group(1); print(base64.b64decode(d)[4:].decode())")
             echo "::add-mask::$SERIAL"
             echo "== method 1: -serial/-username/-password"
-            ci/unity.sh /tmp/activate1.log 300 "" -quit -serial "$SERIAL" -username "$UNITY_EMAIL" -password "$UNITY_PASSWORD" -projectPath /tmp/activate-project
+            ci/unity.sh /tmp/activate1.log 300 "" -quit -serial "$SERIAL" -username "$UNITY_EMAIL" -password "$UNITY_PASSWORD" -createProject /Volumes/U/act
             echo "exit $?"; grep -iE "licens|serial|activat" /tmp/activate1.log | grep -v "$SERIAL" | head -n 60
             if ! [ -f "/Library/Application Support/Unity/Unity_lic.ulf" ]; then
               echo "== method 2: copy license file as-is"
@@ -113,7 +127,8 @@ jobs:
           else
             echo "UNITY_LICENSE secret is not set - testing what Unity does without a license"
           fi
-          ci/unity.sh /tmp/activate2.log 300 "" -quit -projectPath /tmp/activate-project
+          [ -d /Volumes/U/act/Assets ] || ci/unity.sh /tmp/activate0.log 300 "" -quit -createProject /Volumes/U/act
+          ci/unity.sh /tmp/activate2.log 300 "" -quit -projectPath /Volumes/U/act
           rc=$?
           echo "exit $rc"; grep -iE "licens|activat|serial" /tmp/activate2.log | head -n 60
           ls -la "/Library/Application Support/Unity"
@@ -123,14 +138,14 @@ jobs:
         id: unity-build
         timeout-minutes: 45
         env:
-          SHELL_OUT: ${{ github.workspace }}/xcode
+          SHELL_OUT: /Volumes/U/xcode
         run: |
           set +e
-          ci/unity.sh "$PWD/unity.log" 2400 "" -quit -projectPath "$PWD/spike" -executeMethod SpikeBuild.Build
+          ci/unity.sh "$PWD/unity.log" 2400 "" -quit -projectPath /Volumes/U/spike -executeMethod SpikeBuild.Build
           rc=$?
           echo "---- error lines"; grep -n -iE "error|exception|failed|licens" unity.log | head -n 80
           echo "---- last lines"; tail -n 80 unity.log
-          [ -f xcode/Unity-iPhone.xcodeproj/project.pbxproj ] || { echo "no Xcode project produced"; exit 1; }
+          [ -f /Volumes/U/xcode/Unity-iPhone.xcodeproj/project.pbxproj ] || { echo "no Xcode project produced"; exit 1; }
           exit $rc
 
       - name: Return Unity license
@@ -149,7 +164,7 @@ jobs:
         id: xcode
         if: steps.unity-build.outcome == 'success'
         run: |
-          cd xcode
+          cd /Volumes/U/xcode
           # File sharing so Documents (logs, saves) shows up in Files / Filza.
           /usr/libexec/PlistBuddy -c 'Add :UIFileSharingEnabled bool true' Info.plist || true
           /usr/libexec/PlistBuddy -c 'Add :LSSupportsOpeningDocumentsInPlace bool true' Info.plist || true
@@ -163,6 +178,7 @@ jobs:
           rc=$?
           grep -E "error:|\*\* BUILD" xcodebuild.log | sort | uniq -c | sort -rn | head -n 80
           tail -n 40 xcodebuild.log
+          cp xcodebuild.log "$GITHUB_WORKSPACE/"
           exit $rc
 
       - name: Package fakesigned IPA
@@ -170,7 +186,7 @@ jobs:
         run: |
           set -euo pipefail
           brew install ldid
-          APP="$(find xcode/dd -name '*.app' -path '*Release-iphoneos*' | head -n 1)"
+          APP="$(find /Volumes/U/xcode/dd -name '*.app' -path '*Release-iphoneos*' | head -n 1)"
           echo "app: $APP"
           ldid -S "$APP/$(/usr/libexec/PlistBuddy -c 'Print CFBundleExecutable' "$APP/Info.plist")"
           rm -rf Payload && mkdir Payload && cp -R "$APP" Payload/
@@ -184,7 +200,8 @@ jobs:
           name: spike-logs-${{ matrix.runner }}
           path: |
             unity.log
-            xcode/xcodebuild.log
+            xcodebuild.log
+            /tmp/activate*.log
           if-no-files-found: ignore
 
       - name: Publish spike IPA (private repo)
