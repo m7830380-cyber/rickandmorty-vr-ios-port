@@ -117,9 +117,7 @@ jobs:
           fi
           echo "using $M64"; "$M64" --version | head -n 1
           mv "$C/Mono/bin/mono" "$C/Mono/bin/mono.orig"
-          printf '#!/bin/bash
-exec "%s" "$@"
-' "$M64" > "$C/Mono/bin/mono"
+          printf '#!/bin/bash\nexec "%s" "$@"\n' "$M64" > "$C/Mono/bin/mono"
           chmod +x "$C/Mono/bin/mono"
           echo "class T{static void Main(){System.Console.WriteLine(\"smcs ok\");}}" > /tmp/t.cs
           MONO_PATH="$C/Mono/lib/mono/unity" "$C/Mono/bin/mono" "$C/Mono/lib/mono/unity/smcs.exe" -out:/tmp/t.exe /tmp/t.cs && "$M64" /tmp/t.exe
