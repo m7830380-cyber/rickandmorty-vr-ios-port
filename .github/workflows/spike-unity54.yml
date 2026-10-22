@@ -82,6 +82,9 @@ jobs:
           mv /Volumes/U/Unity/PlaybackEngines/iOSSupport /Volumes/U/Unity/Unity.app/Contents/PlaybackEngines/
           ln -s ../Unity.app/Contents/PlaybackEngines/iOSSupport /Volumes/U/Unity/PlaybackEngines/iOSSupport
           ls /Volumes/U/Unity/Unity.app/Contents/PlaybackEngines/
+          for m in /Volumes/U/Unity/Unity.app/Contents/PlaybackEngines/*/; do
+            echo "==== $m"; ls "$m"; cat "$m/ivy.xml" 2>/dev/null | head -n 40
+          done
           cp -R spike /Volumes/U/spike
           df -h /Volumes/U
 
