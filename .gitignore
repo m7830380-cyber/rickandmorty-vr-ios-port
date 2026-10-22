@@ -1,0 +1,14 @@
+# Never commit game files or anything derived from them (they live in the private repo).
+*.dll
+*.assets
+*.resS
+*.resource
+*.ipa
+decomp/
+private/
+work/
+spike/Library/
+spike/Temp/
+spike/ProjectSettings/
+spike/Assets/Scenes/
+*.meta

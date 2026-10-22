@@ -1,0 +1,199 @@
+name: Spike - Unity 5.4.3p4 iOS build
+
+# Feasibility test: install Unity 5.4.3p4 (the game's exact version) on a GitHub macOS runner, license it,
+# IL2CPP-build an EMPTY test project for iOS (arm64, Metal) and compile it with a current Xcode.
+# Contains nothing from the game. The test IPA goes to the private repo's release anyway, like every IPA.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'spike/**'
+      - 'ci/**'
+      - '.github/workflows/spike-unity54.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  UNITY_VERSION: 5.4.3p4
+  UNITY_HASH: 4dfc8d4040f2
+  PRIVATE_REPO: m7830380-cyber/rmvr-ios-private
+
+jobs:
+  spike:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [macos-15-intel]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Runner info
+        run: |
+          sw_vers; uname -m
+          ls -d /Applications/Xcode*.app
+          xcodebuild -version
+
+      - name: Restore Unity install
+        id: unity-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: /Applications/Unity
+          key: unity-${{ env.UNITY_VERSION }}-ios-${{ matrix.runner }}-v1
+
+      - name: Install Unity ${{ env.UNITY_VERSION }} + iOS support
+        if: steps.unity-cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          BASE=https://download.unity3d.com/download_unity/$UNITY_HASH
+          curl -fsSL --retry 3 -o /tmp/editor.pkg "$BASE/MacEditorInstaller/Unity-$UNITY_VERSION.pkg" &
+          curl -fsSL --retry 3 -o /tmp/ios.pkg "$BASE/MacEditorTargetInstaller/UnitySetup-iOS-Support-for-Editor-$UNITY_VERSION.pkg" &
+          wait
+          ls -lh /tmp/*.pkg
+          sudo installer -pkg /tmp/editor.pkg -target /
+          sudo installer -pkg /tmp/ios.pkg -target /
+          rm -f /tmp/editor.pkg /tmp/ios.pkg
+          sudo chown -R "$(whoami)" /Applications/Unity
+
+      - name: Save Unity install
+        if: steps.unity-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: /Applications/Unity
+          key: unity-${{ env.UNITY_VERSION }}-ios-${{ matrix.runner }}-v1
+
+      - name: Check Unity
+        run: |
+          ls /Applications/Unity
+          ls /Applications/Unity/PlaybackEngines || true
+          file /Applications/Unity/Unity.app/Contents/MacOS/Unity
+          /usr/libexec/PlistBuddy -c 'Print CFBundleVersion' /Applications/Unity/Unity.app/Contents/Info.plist || true
+
+      # Non-secret facts about the license file, to see whether it is a Unity 5-era or modern license.
+      - name: Inspect license file
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+        run: |
+          [ -n "$UNITY_LICENSE" ] || { echo "UNITY_LICENSE secret is not set"; exit 0; }
+          printf '%s' "$UNITY_LICENSE" | grep -oE '<(LicenseVersion|ClientProvidedVersion|InitialActivationDate|StartDate|StopDate|UpdateDate)[^>]*>' || true
+          printf '%s' "$UNITY_LICENSE" | grep -oE '<Feature Value="[0-9]+"' | tr '\n' ' '; echo
+
+      # Unity 5 licenses inside the editor process (no Licensing Client). Try, in order:
+      #  1. command-line activation with the serial from the license + account (what works for 2020+);
+      #  2. dropping the license file into place as-is.
+      - name: Activate Unity
+        id: activate
+        continue-on-error: true
+        timeout-minutes: 15
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+        run: |
+          set +e
+          for d in "/Library/Application Support/Unity" "$HOME/Library/Unity" "$HOME/Library/Logs/Unity"; do
+            sudo mkdir -p "$d"; sudo chown -R "$(whoami)" "$d"; sudo chmod -R 775 "$d"
+          done
+          mkdir -p /tmp/activate-project
+          OK="License activated successfully|license is already valid|Successfully activated|LICENSE SYSTEM .*Valid"
+          if [ -n "$UNITY_LICENSE" ]; then
+            SERIAL=$(printf '%s' "$UNITY_LICENSE" | python3 -c "import sys,re,base64; d=re.search(r'<DeveloperData Value=\"([^\"]+)\"',sys.stdin.read()).group(1); print(base64.b64decode(d)[4:].decode())")
+            echo "::add-mask::$SERIAL"
+            echo "== method 1: -serial/-username/-password"
+            ci/unity.sh /tmp/activate1.log 300 "" -quit -serial "$SERIAL" -username "$UNITY_EMAIL" -password "$UNITY_PASSWORD" -projectPath /tmp/activate-project
+            echo "exit $?"; grep -iE "licens|serial|activat" /tmp/activate1.log | grep -v "$SERIAL" | head -n 60
+            if ! [ -f "/Library/Application Support/Unity/Unity_lic.ulf" ]; then
+              echo "== method 2: copy license file as-is"
+              printf '%s' "$UNITY_LICENSE" > "/Library/Application Support/Unity/Unity_lic.ulf"
+            fi
+          else
+            echo "UNITY_LICENSE secret is not set - testing what Unity does without a license"
+          fi
+          ci/unity.sh /tmp/activate2.log 300 "" -quit -projectPath /tmp/activate-project
+          rc=$?
+          echo "exit $rc"; grep -iE "licens|activat|serial" /tmp/activate2.log | head -n 60
+          ls -la "/Library/Application Support/Unity"
+          exit $rc
+
+      - name: Unity build (Xcode project)
+        id: unity-build
+        timeout-minutes: 45
+        env:
+          SHELL_OUT: ${{ github.workspace }}/xcode
+        run: |
+          set +e
+          ci/unity.sh "$PWD/unity.log" 2400 "" -quit -projectPath "$PWD/spike" -executeMethod SpikeBuild.Build
+          rc=$?
+          echo "---- error lines"; grep -n -iE "error|exception|failed|licens" unity.log | head -n 80
+          echo "---- last lines"; tail -n 80 unity.log
+          [ -f xcode/Unity-iPhone.xcodeproj/project.pbxproj ] || { echo "no Xcode project produced"; exit 1; }
+          exit $rc
+
+      - name: Return Unity license
+        if: always()
+        timeout-minutes: 5
+        env:
+          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+        run: |
+          [ -x /Applications/Unity/Unity.app/Contents/MacOS/Unity ] || exit 0
+          [ -n "$UNITY_EMAIL" ] || exit 0
+          ci/unity.sh /tmp/return.log 180 "" -quit -returnlicense || true
+          grep -iE "licens|return" /tmp/return.log | head -n 20
+
+      - name: Xcode build (unsigned)
+        id: xcode
+        if: steps.unity-build.outcome == 'success'
+        run: |
+          cd xcode
+          # File sharing so Documents (logs, saves) shows up in Files / Filza.
+          /usr/libexec/PlistBuddy -c 'Add :UIFileSharingEnabled bool true' Info.plist || true
+          /usr/libexec/PlistBuddy -c 'Add :LSSupportsOpeningDocumentsInPlace bool true' Info.plist || true
+          set +e
+          xcodebuild -project Unity-iPhone.xcodeproj -scheme Unity-iPhone -configuration Release \
+            -sdk iphoneos -derivedDataPath "$PWD/dd" ARCHS=arm64 IPHONEOS_DEPLOYMENT_TARGET=12.0 \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" DEVELOPMENT_TEAM="" \
+            ENABLE_BITCODE=NO GCC_TREAT_WARNINGS_AS_ERRORS=NO \
+            'OTHER_CFLAGS=$(inherited) -Wno-error=implicit-function-declaration -Wno-error=incompatible-function-pointer-types -Wno-error=int-conversion' \
+            build > xcodebuild.log 2>&1
+          rc=$?
+          grep -E "error:|\*\* BUILD" xcodebuild.log | sort | uniq -c | sort -rn | head -n 80
+          tail -n 40 xcodebuild.log
+          exit $rc
+
+      - name: Package fakesigned IPA
+        if: steps.xcode.outcome == 'success'
+        run: |
+          set -euo pipefail
+          brew install ldid
+          APP="$(find xcode/dd -name '*.app' -path '*Release-iphoneos*' | head -n 1)"
+          echo "app: $APP"
+          ldid -S "$APP/$(/usr/libexec/PlistBuddy -c 'Print CFBundleExecutable' "$APP/Info.plist")"
+          rm -rf Payload && mkdir Payload && cp -R "$APP" Payload/
+          zip -qry RMVR-spike.ipa Payload
+          ls -lh RMVR-spike.ipa
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: spike-logs-${{ matrix.runner }}
+          path: |
+            unity.log
+            xcode/xcodebuild.log
+          if-no-files-found: ignore
+
+      - name: Publish spike IPA (private repo)
+        if: steps.xcode.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ secrets.PRIVATE_REPO_TOKEN }}
+        run: |
+          [ -n "$GH_TOKEN" ] || { echo "PRIVATE_REPO_TOKEN not set - skipping"; exit 0; }
+          TAG=spike-unity54
+          gh release view "$TAG" --repo "$PRIVATE_REPO" >/dev/null 2>&1 || \
+            gh release create "$TAG" --title "Unity 5.4 spike (empty test app, no game content)" --notes "run ${{ github.run_number }}" --prerelease --repo "$PRIVATE_REPO"
+          gh release upload "$TAG" RMVR-spike.ipa --clobber --repo "$PRIVATE_REPO"
