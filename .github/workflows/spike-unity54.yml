@@ -99,28 +99,24 @@ jobs:
           done
           echo "UNITY_DYLD=/Volumes/U/shim/dirshim.dylib" >> "$GITHUB_ENV"
 
-      # The Mono that Unity 5.4 runs its C# compiler (and IL2CPP tools) with may be 32-bit, which macOS
-      # 10.15+ cannot run. If so, put a wrapper in its place that runs a 64-bit Mono instead.
+      # Unity 5.4's "mono" programs are 32-bit, which macOS 10.15+ cannot run. ci/mono-wrapper.sh takes
+      # their place and runs Unity's 64-bit mono-sgen instead (and a newer compiler for scripts).
       - name: 64-bit Mono for the compiler
         run: |
+          set -euo pipefail
           C=/Applications/Unity/Unity.app/Contents
-          find "$C" -type f -perm +111 -path '*/bin/mono*' -name 'mono*' -exec file {} \;
-          "$C/Mono/bin/mono" --version 2>&1 | head -n 2; echo "rc=$?"
-          if file "$C/Mono/bin/mono" | grep -q x86_64; then echo "compiler Mono is 64-bit, leaving it"; exit 0; fi
-          M64=""
-          for m in "$C/MonoBleedingEdge/bin/mono" "$C/MonoBleedingEdge/bin/mono-sgen"; do
-            [ -f "$m" ] && file "$m" | grep -q x86_64 && "$m" --version >/dev/null 2>&1 && { M64="$m"; break; }
+          ls "$C"/MonoBleedingEdge/lib/mono/ | xargs echo
+          ls "$C"/MonoBleedingEdge/lib/mono/4.5/mcs.exe
+          for m in "$C/Mono/bin/mono" "$C/MonoBleedingEdge/bin/mono"; do
+            file "$m" | grep -q x86_64 && continue
+            mv "$m" "$m.i386"; cp ci/mono-wrapper.sh "$m"; chmod +x "$m"
           done
-          if [ -z "$M64" ]; then
-            brew install mono >/dev/null
-            M64="$(brew --prefix)/bin/mono"
-          fi
-          echo "using $M64"; "$M64" --version | head -n 1
-          mv "$C/Mono/bin/mono" "$C/Mono/bin/mono.orig"
-          printf '#!/bin/bash\nexec "%s" "$@"\n' "$M64" > "$C/Mono/bin/mono"
-          chmod +x "$C/Mono/bin/mono"
-          echo "class T{static void Main(){System.Console.WriteLine(\"smcs ok\");}}" > /tmp/t.cs
-          MONO_PATH="$C/Mono/lib/mono/unity" "$C/Mono/bin/mono" "$C/Mono/lib/mono/unity/smcs.exe" -out:/tmp/t.exe /tmp/t.cs && "$M64" /tmp/t.exe
+          # Compile a test program the way Unity does and check it references the 2.0 corlib.
+          echo 'class T{static void Main(){System.Console.WriteLine("test program ran");}}' > /tmp/t.cs
+          echo "-target:exe -out:/tmp/t.exe /tmp/t.cs" > /tmp/t.rsp
+          MONO_PATH="$C/Mono/lib/mono/unity" MONO_CFG_DIR="$C/Mono/etc" "$C/Mono/bin/mono" "$C/Mono/lib/mono/unity/smcs.exe" @/tmp/t.rsp
+          "$C/Mono/bin/mono" /tmp/t.exe
+          "$C/MonoBleedingEdge/bin/monodis" --assemblyref /tmp/t.exe || true
 
       - name: Check Unity
         run: |
