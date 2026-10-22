@@ -144,7 +144,10 @@ jobs:
           ci/unity.sh "$PWD/unity.log" 2400 "" -quit -projectPath /Volumes/U/spike -executeMethod SpikeBuild.Build
           rc=$?
           echo "---- error lines"; grep -n -iE "error|exception|failed|licens" unity.log | head -n 80
-          echo "---- last lines"; tail -n 80 unity.log
+          echo "---- last lines"; tail -n 40 unity.log
+          echo "---- project files after the run"; find /Volumes/U/spike -maxdepth 3 -not -path '*/Library/*' | head -n 60
+          ls -la /Volumes/U/spike/Library/ScriptAssemblies 2>&1 | head
+          echo "---- /Volumes/U/act"; find /Volumes/U/act -maxdepth 2 | head -n 30
           [ -f /Volumes/U/xcode/Unity-iPhone.xcodeproj/project.pbxproj ] || { echo "no Xcode project produced"; exit 1; }
           exit $rc
 
