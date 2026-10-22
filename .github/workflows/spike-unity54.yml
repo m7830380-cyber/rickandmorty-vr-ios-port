@@ -81,6 +81,24 @@ jobs:
           cp -R spike /Volumes/U/spike
           df -h /Volumes/U
 
+      # Unity 5.4 lists folders with getdirentriesattr(); test that call on this macOS and build the
+      # replacement (ci/dirshim) that answers it with getattrlistbulk().
+      - name: Folder-listing shim
+        run: |
+          set -euo pipefail
+          U=/Applications/Unity/Unity.app/Contents/MacOS/Unity
+          echo "---- folder APIs Unity imports"
+          nm -u "$U" | grep -iE "getdirentries|getattrlist|readdir|opendir|fts_|contentsOfDirectory" || true
+          mkdir -p /Volumes/U/shim
+          clang -arch x86_64 -O2 -dynamiclib -o /Volumes/U/shim/dirshim.dylib ci/dirshim/dirshim.c
+          clang -arch x86_64 -O2 -o /Volumes/U/shim/dirtest ci/dirshim/dirtest.c
+          mkdir -p "$RUNNER_TEMP/apfs" && cp -R spike/Assets "$RUNNER_TEMP/apfs/"
+          for d in /Volumes/U/spike/Assets "$RUNNER_TEMP/apfs/Assets"; do
+            echo "---- $d without shim"; /Volumes/U/shim/dirtest "$d" || true
+            echo "---- $d with shim"; DIRSHIM_VERBOSE=1 DYLD_INSERT_LIBRARIES=/Volumes/U/shim/dirshim.dylib /Volumes/U/shim/dirtest "$d" || true
+          done
+          echo "UNITY_DYLD=/Volumes/U/shim/dirshim.dylib" >> "$GITHUB_ENV"
+
       - name: Check Unity
         run: |
           ls /Applications/Unity/

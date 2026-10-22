@@ -7,8 +7,11 @@ LOG="$1"; LIMIT="$2"; DONE="$3"; shift 3
 UNITY=/Applications/Unity/Unity.app/Contents/MacOS/Unity
 # Unity 5.4 is Intel-only: run it natively on Intel runners, under Rosetta on Apple silicon.
 ARCH=""; [ "$(uname -m)" = arm64 ] && ARCH="arch -x86_64"
+# UNITY_DYLD: libraries to inject (ci/dirshim). Passed here, not exported earlier, because macOS strips
+# DYLD_* variables whenever a system binary such as /bin/bash starts.
+INJECT=""; [ -n "$UNITY_DYLD" ] && INJECT="env DYLD_INSERT_LIBRARIES=$UNITY_DYLD"
 rm -f "$LOG"; touch "$LOG"
-$ARCH "$UNITY" -batchmode -nographics -logFile "$LOG" "$@" &
+$ARCH $INJECT "$UNITY" -batchmode -nographics -logFile "$LOG" "$@" &
 PID=$!
 tail -n +1 -f "$LOG" > >(grep --line-buffered -iE "licens|error|exception|build|\[RMVR|compil|exiting" | cut -c1-300) &
 TAILPID=$!
