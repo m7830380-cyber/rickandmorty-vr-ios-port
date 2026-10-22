@@ -78,6 +78,10 @@ jobs:
           sudo rm -rf /Applications/Unity
           sudo ln -s /Volumes/U/Unity /Applications/Unity
           sudo chown -R "$(whoami)" /Volumes/U
+          # The editor only registered the platform module inside the app bundle, so put iOS support there too.
+          mv /Volumes/U/Unity/PlaybackEngines/iOSSupport /Volumes/U/Unity/Unity.app/Contents/PlaybackEngines/
+          ln -s ../Unity.app/Contents/PlaybackEngines/iOSSupport /Volumes/U/Unity/PlaybackEngines/iOSSupport
+          ls /Volumes/U/Unity/Unity.app/Contents/PlaybackEngines/
           cp -R spike /Volumes/U/spike
           df -h /Volumes/U
 
