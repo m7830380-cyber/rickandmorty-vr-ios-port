@@ -6,10 +6,12 @@
 # own "unity" (.NET 2.0) libraries so the result still matches the editor's runtime.
 C="$(cd "$(dirname "$0")/../.." && pwd)"
 SGEN="$C/MonoBleedingEdge/bin/mono-sgen"
-PROFILE="$C/Mono/lib/mono/unity"
 # Unity points these at its 2.0 corlib, which the newer runtime refuses to load.
 unset MONO_PATH MONO_CFG_DIR
-if [[ "$1" == *smcs.exe ]]; then
+# Game scripts compile with lib/mono/unity/smcs.exe, editor scripts with lib/mono/2.0/gmcs.exe; build
+# against the libraries in the folder the requested compiler lives in.
+if [[ "$1" == *smcs.exe || "$1" == *gmcs.exe ]]; then
+  PROFILE="$(cd "$(dirname "$1")" && pwd)"
   shift
   MCS="$(ls "$C"/MonoBleedingEdge/lib/mono/4.5/mcs.exe "$C"/MonoBleedingEdge/lib/mono/4.0/mcs.exe 2>/dev/null | head -n 1)"
   exec "$SGEN" "$MCS" -noconfig -nostdlib -lib:"$PROFILE" \
