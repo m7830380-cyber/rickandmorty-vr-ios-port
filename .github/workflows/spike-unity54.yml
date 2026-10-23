@@ -262,6 +262,19 @@ jobs:
           zip -qry RMVR-spike.ipa Payload
           ls -lh RMVR-spike.ipa
 
+      # Artifacts of a public repo are public and GitHub does not mask secrets inside files, so activation
+      # logs (Unity writes the account email into them) are never uploaded, and the uploaded logs are scrubbed.
+      - name: Scrub logs
+        if: always()
+        env:
+          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+        run: |
+          for f in unity.log xcodebuild.log; do
+            [ -f "$f" ] || continue
+            [ -n "$UNITY_EMAIL" ] && F="$UNITY_EMAIL" perl -pi -e 's/\Q$ENV{F}\E/<email>/g' "$f"
+            perl -pi -e 's/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/<email>/g' "$f"
+          done
+
       - name: Upload logs
         if: always()
         uses: actions/upload-artifact@v4
@@ -270,7 +283,6 @@ jobs:
           path: |
             unity.log
             xcodebuild.log
-            /tmp/activate*.log
           if-no-files-found: ignore
 
       - name: Publish spike IPA (private repo)
