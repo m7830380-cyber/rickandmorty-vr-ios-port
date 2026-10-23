@@ -38,6 +38,36 @@ jobs:
           ls -d /Applications/Xcode*.app
           xcodebuild -version
 
+      # Unity 5.4 cannot activate itself any more and a .ulf is tied to the machine it was made on, so a modern
+      # editor (2020.3.1f1, the version already proven with this account) activates the runner; its license file
+      # in /Library/Application Support/Unity is then read by 5.4. Only its editor is installed, next to 5.4.
+      - name: Restore licensing editor
+        id: licensor-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: /Applications/UnityLicensor
+          key: unity-licensor-2020.3.1f1-${{ matrix.runner }}-v1
+
+      - name: Install licensing editor (Unity 2020.3.1f1)
+        if: steps.licensor-cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          curl -fsSL --retry 3 -o /tmp/lic.pkg https://download.unity3d.com/download_unity/77a89f25062f/MacEditorInstaller/Unity-2020.3.1f1.pkg
+          pkgutil --expand-full /tmp/lic.pkg /tmp/licpkg
+          APP=$(find /tmp/licpkg -maxdepth 4 -type d -name Unity.app | head -n 1)
+          [ -n "$APP" ] || { find /tmp/licpkg -maxdepth 3; exit 1; }
+          mkdir -p /Applications/UnityLicensor
+          mv "$APP" /Applications/UnityLicensor/Unity.app
+          rm -rf /tmp/lic.pkg /tmp/licpkg
+          ls /Applications/UnityLicensor/Unity.app/Contents/Frameworks | head -n 30
+
+      - name: Save licensing editor
+        if: steps.licensor-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: /Applications/UnityLicensor
+          key: unity-licensor-2020.3.1f1-${{ matrix.runner }}-v1
+
       - name: Restore Unity install
         id: unity-cache
         uses: actions/cache/restore@v4
@@ -162,42 +192,37 @@ jobs:
           printf '%s' "$UNITY_LICENSE" | grep -oE '<[A-Za-z]+' | sort | uniq -c | xargs echo
           printf '%s' "$UNITY_LICENSE" | grep -oE '<Feature Value="[0-9]+"' | tr '\n' ' '; echo
 
-      # Unity 5 licenses inside the editor process (no Licensing Client). Try, in order:
-      #  1. command-line activation with the serial from the license + account (what works for 2020+);
-      #  2. dropping the license file into place as-is.
       - name: Activate Unity
         id: activate
-        continue-on-error: true
         timeout-minutes: 15
         env:
           UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
           UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
           UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+          UNITY_BIN: /Applications/UnityLicensor/Unity.app/Contents/MacOS/Unity
+          UNITY_DYLD: ""
         run: |
           set +e
-          for d in "/Library/Application Support/Unity" "$HOME/Library/Unity" "$HOME/Library/Logs/Unity"; do
+          SERIAL=$(printf '%s' "$UNITY_LICENSE" | python3 -c "import sys,re,base64; d=re.search(r'<DeveloperData Value=\"([^\"]+)\"',sys.stdin.read()).group(1); print(base64.b64decode(d)[4:].decode())")
+          [ -n "$SERIAL" ] || { echo "could not read the serial from UNITY_LICENSE"; exit 1; }
+          echo "::add-mask::$SERIAL"
+          # Unity otherwise asks for an admin password (GUI dialog) to create these and waits forever
+          for d in "/Library/Application Support/Unity" "/Library/Application Support/Unity/licenses" "$HOME/Library/Unity/licenses" "$HOME/Library/Logs/Unity"; do
             sudo mkdir -p "$d"; sudo chown -R "$(whoami)" "$d"; sudo chmod -R 775 "$d"
           done
-                    OK="License activated successfully|license is already valid|Successfully activated|LICENSE SYSTEM .*Valid"
-          if [ -n "$UNITY_LICENSE" ]; then
-            SERIAL=$(printf '%s' "$UNITY_LICENSE" | python3 -c "import sys,re,base64; d=re.search(r'<DeveloperData Value=\"([^\"]+)\"',sys.stdin.read()).group(1); print(base64.b64decode(d)[4:].decode())")
-            echo "::add-mask::$SERIAL"
-            echo "== method 1: -serial/-username/-password"
-            ci/unity.sh /tmp/activate1.log 300 "" -quit -serial "$SERIAL" -username "$UNITY_EMAIL" -password "$UNITY_PASSWORD" -createProject /Volumes/U/act
-            echo "exit $?"; grep -iE "licens|serial|activat" /tmp/activate1.log | grep -v "$SERIAL" | head -n 60
-            if ! [ -f "/Library/Application Support/Unity/Unity_lic.ulf" ]; then
-              echo "== method 2: copy license file as-is"
-              printf '%s' "$UNITY_LICENSE" > "/Library/Application Support/Unity/Unity_lic.ulf"
-            fi
-          else
-            echo "UNITY_LICENSE secret is not set - testing what Unity does without a license"
-          fi
-          [ -d /Volumes/U/act/Assets ] || ci/unity.sh /tmp/activate0.log 300 "" -quit -createProject /Volumes/U/act
-          ci/unity.sh /tmp/activate2.log 300 "" -quit -projectPath /Volumes/U/act
-          rc=$?
-          echo "exit $rc"; grep -iE "licens|activat|serial" /tmp/activate2.log | head -n 60
-          ls -la "/Library/Application Support/Unity"
-          ls -laR "$HOME/Library/Logs/Unity" "$HOME/Library/Unity" 2>/dev/null | head -n 40
+          sudo chown -R "$(whoami)" "$HOME/Library/Unity" "/Library/Application Support/Unity"
+          mkdir -p "$HOME/Library/Unity/cache" /tmp/activate-project
+          OK="License activated successfully|license is already valid and activated|Successfully activated"
+          for attempt in 1 2; do
+            ci/unity.sh /tmp/activate.log 240 "$OK" -quit -serial "$SERIAL" -username "$UNITY_EMAIL" -password "$UNITY_PASSWORD" -projectPath /tmp/activate-project
+            rc=$?
+            echo "attempt $attempt: exit code $rc"
+            [ $rc = 0 ] && break
+          done
+          # Only file names and non-secret license fields go to the (public) log.
+          ls -la "/Library/Application Support/Unity" "/Library/Application Support/Unity/licenses" 2>/dev/null
+          ULF="/Library/Application Support/Unity/Unity_lic.ulf"
+          [ -f "$ULF" ] && grep -oE '<(LicenseVersion|ClientProvidedVersion|StartDate|StopDate)[^>]*>' "$ULF" | sed 's/^/field: /'
           exit $rc
 
       - name: Unity build (Xcode project)
@@ -223,11 +248,12 @@ jobs:
         env:
           UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
           UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+          UNITY_BIN: /Applications/UnityLicensor/Unity.app/Contents/MacOS/Unity
+          UNITY_DYLD: ""
         run: |
-          [ -x /Applications/Unity/Unity.app/Contents/MacOS/Unity ] || exit 0
+          [ -x "$UNITY_BIN" ] || exit 0
           [ -n "$UNITY_EMAIL" ] || exit 0
-          ci/unity.sh /tmp/return.log 180 "" -quit -returnlicense || true
-          grep -iE "licens|return" /tmp/return.log | head -n 20
+          ci/unity.sh /tmp/return.log 150 "" -quit -returnlicense -username "$UNITY_EMAIL" -password "$UNITY_PASSWORD" || true
 
       - name: Xcode build (unsigned)
         id: xcode

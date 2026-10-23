@@ -4,7 +4,8 @@
 # Returns Unity's exit code; 0 if the done regex appeared in the log (Unity is then killed if it lingers);
 # 124 on timeout. The log is followed live so the job output shows progress.
 LOG="$1"; LIMIT="$2"; DONE="$3"; shift 3
-UNITY=/Applications/Unity/Unity.app/Contents/MacOS/Unity
+# UNITY_BIN: another editor to run (the licensing editor); defaults to Unity 5.4.
+UNITY="${UNITY_BIN:-/Applications/Unity/Unity.app/Contents/MacOS/Unity}"
 # Unity 5.4 is Intel-only: run it natively on Intel runners, under Rosetta on Apple silicon.
 ARCH=""; [ "$(uname -m)" = arm64 ] && ARCH="arch -x86_64"
 # UNITY_DYLD: libraries to inject (ci/dirshim). Passed here, not exported earlier, because macOS strips
