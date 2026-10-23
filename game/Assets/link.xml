@@ -1,0 +1,8 @@
+<!-- Keep every game type: scenes and prefabs reference scripts by name and the game uses reflection. -->
+<linker>
+  <assembly fullname="Assembly-CSharp" preserve="all" />
+  <assembly fullname="Assembly-CSharp-firstpass" preserve="all" />
+  <assembly fullname="Assembly-UnityScript" preserve="all" />
+  <assembly fullname="UnityEngine.UI" preserve="all" />
+  <assembly fullname="Boo.Lang" preserve="all" />
+</linker>

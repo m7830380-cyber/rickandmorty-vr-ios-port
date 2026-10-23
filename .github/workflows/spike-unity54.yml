@@ -4,13 +4,8 @@ name: Spike - Unity 5.4.3p4 iOS build
 # IL2CPP-build an EMPTY test project for iOS (arm64, Metal) and compile it with a current Xcode.
 # Contains nothing from the game. The test IPA goes to the private repo's release anyway, like every IPA.
 
+# Dead end (Unity 5.4 cannot use the account's license for iOS); kept for reference, manual runs only.
 on:
-  push:
-    branches: [main]
-    paths:
-      - 'spike/**'
-      - 'ci/**'
-      - '.github/workflows/spike-unity54.yml'
   workflow_dispatch:
 
 permissions:

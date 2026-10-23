@@ -1,0 +1,233 @@
+name: Build iOS game (flat, Unity 2020.3)
+
+# Builds the real game for iPhone without VR. Everything game-derived comes from the PRIVATE repo (scripts in
+# git, converted assets as a release file) and only ever exists on the runner; the IPA and full logs go back to
+# the private repo's releases. This public log only shows filtered Unity lines and counts.
+on:
+  push:
+    branches: [main]
+    paths: ['game/**', 'ci/**', '.github/workflows/build-game.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-game
+  cancel-in-progress: true
+
+env:
+  UNITY_VERSION: 2020.3.1f1
+  UNITY_HASH: 77a89f25062f
+  TMP_VERSION: 3.0.6
+  PRIVATE_REPO: m7830380-cyber/rmvr-ios-private
+
+jobs:
+  game:
+    runs-on: macos-14
+    timeout-minutes: 340
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Free disk space
+        run: |
+          df -h / | tail -1
+          sudo rm -rf ~/Library/Android /usr/local/share/dotnet /Users/runner/.dotnet /usr/local/lib/node_modules \
+            /Users/runner/hostedtoolcache/CodeQL /Users/runner/hostedtoolcache/go /Users/runner/hostedtoolcache/Ruby \
+            /Users/runner/hostedtoolcache/Python /Users/runner/hostedtoolcache/node 2>/dev/null || true
+          for x in /Applications/Xcode_*.app; do [ "$x" = /Applications/Xcode_15.4.app ] || sudo rm -rf "$x"; done
+          xcrun simctl delete all 2>/dev/null || true
+          sudo rm -rf ~/Library/Developer/CoreSimulator 2>/dev/null || true
+          df -h / | tail -1
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode_15.4.app && xcodebuild -version
+
+      - name: Check out the private game repo
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.PRIVATE_REPO }}
+          token: ${{ secrets.PRIVATE_REPO_TOKEN }}
+          path: private
+
+      - name: Unpack converted game assets
+        env:
+          GH_TOKEN: ${{ secrets.PRIVATE_REPO_TOKEN }}
+        run: |
+          set -euo pipefail
+          command -v zstd >/dev/null || brew install zstd
+          gh release download game-assets --repo "$PRIVATE_REPO" --pattern assets.tar.zst --output /tmp/assets.tar.zst
+          ls -lh /tmp/assets.tar.zst | awk '{print "asset pack", $5}'
+          zstd -d --long=27 -q -c /tmp/assets.tar.zst | tar -x -C private/project
+          rm /tmp/assets.tar.zst
+          du -sh private/project/Assets | awk '{print "project assets", $1}'
+          df -h / | tail -1
+
+      - name: Add the flat-mode code and patch the player rig
+        run: |
+          set -euo pipefail
+          rsync -a game/Assets/ private/project/Assets/
+          python3 ci/flatpatch.py private/project
+
+      - name: Install real shaders
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/builtin /tmp/tmp
+          curl -fsSL --retry 3 -o /tmp/builtin.zip "https://download.unity3d.com/download_unity/$UNITY_HASH/builtin_shaders-$UNITY_VERSION.zip"
+          unzip -q /tmp/builtin.zip -d /tmp/builtin
+          curl -fsSL --retry 3 "https://download.packages.unity.com/com.unity.textmeshpro/-/com.unity.textmeshpro-$TMP_VERSION.tgz" | tar -xz -C /tmp/tmp
+          python3 ci/install_shaders.py private/project game/Shaders /tmp/builtin /tmp/tmp/package
+
+      # Unity 2020.3.1f1 has no Apple-silicon editor, so the Intel editor + iOS module run under Rosetta.
+      # Only Unity itself is cached - nothing from the game.
+      - name: Restore Unity install
+        id: unity-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: /Applications/Unity
+          key: unity-2020.3.1f1-ios-x64-v1
+
+      - name: Install Unity ${{ env.UNITY_VERSION }} (Intel, Rosetta)
+        if: steps.unity-cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          BASE=https://download.unity3d.com/download_unity/$UNITY_HASH
+          curl -fsSL --retry 3 -o /tmp/editor.pkg "$BASE/MacEditorInstaller/Unity-$UNITY_VERSION.pkg" &
+          curl -fsSL --retry 3 -o /tmp/ios.pkg "$BASE/MacEditorTargetInstaller/UnitySetup-iOS-Support-for-Editor-$UNITY_VERSION.pkg" &
+          wait
+          sudo installer -pkg /tmp/editor.pkg -target /
+          sudo installer -pkg /tmp/ios.pkg -target /
+          rm -f /tmp/editor.pkg /tmp/ios.pkg
+          sudo chown -R "$(whoami)" /Applications/Unity
+
+      - name: Save Unity install
+        if: steps.unity-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: /Applications/Unity
+          key: unity-2020.3.1f1-ios-x64-v1
+
+      - name: Rosetta
+        run: sudo softwareupdate --install-rosetta --agree-to-license || true
+
+      # The .ulf is bound to the machine it was made on, so activate this runner with the serial inside it
+      # and return the seat afterwards. Activation output is never uploaded anywhere.
+      - name: Activate Unity
+        timeout-minutes: 12
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+        run: |
+          set +e
+          SERIAL=$(printf '%s' "$UNITY_LICENSE" | python3 -c "import sys,re,base64; d=re.search(r'<DeveloperData Value=\"([^\"]+)\"',sys.stdin.read()).group(1); print(base64.b64decode(d)[4:].decode())")
+          [ -n "$SERIAL" ] || { echo "could not read the serial from UNITY_LICENSE"; exit 1; }
+          echo "::add-mask::$SERIAL"
+          mkdir -p /tmp/activate-project
+          for d in "/Library/Application Support/Unity" "/Library/Application Support/Unity/licenses" "$HOME/Library/Unity/licenses"; do
+            sudo mkdir -p "$d"; sudo chown -R "$(whoami)" "$d"; sudo chmod -R 775 "$d"
+          done
+          sudo chown -R "$(whoami)" "$HOME/Library/Unity" "/Library/Application Support/Unity"
+          mkdir -p "$HOME/Library/Unity/cache"
+          OK="License activated successfully|license is already valid and activated|Successfully activated"
+          for attempt in 1 2; do
+            ci/unity.sh /tmp/activate.log 240 "$OK" -quit -serial "$SERIAL" -username "$UNITY_EMAIL" -password "$UNITY_PASSWORD" -projectPath /tmp/activate-project
+            rc=$?
+            echo "attempt $attempt: exit code $rc"
+            [ $rc = 0 ] && break
+          done
+          rm -f /tmp/activate.log
+          exit $rc
+
+      - name: Unity build (Xcode project)
+        timeout-minutes: 240
+        env:
+          SHELL_OUT: ${{ github.workspace }}/xcode
+        run: |
+          set +e
+          ci/unity.sh "$PWD/unity.log" 14000 "" -quit -projectPath "$PWD/private/project" -buildTarget iOS -executeMethod FlatBuild.Build
+          rc=$?
+          echo "---- compiler errors (count by code)"
+          grep -oE "error CS[0-9]+" unity.log | sort | uniq -c | sort -rn | head -n 20
+          grep -E "error CS[0-9]+" unity.log | sed -E 's/^.*Assets\//Assets\//' | cut -c1-220 | sort -u | head -n 40
+          echo "---- shader errors"
+          grep -E "Shader error|shader compiler" unity.log | cut -c1-200 | sort -u | head -n 20
+          grep -E "\[RMVR\]" unity.log | cut -c1-300
+          [ -f xcode/Unity-iPhone.xcodeproj/project.pbxproj ] || { echo "no Xcode project produced"; exit 1; }
+          exit $rc
+
+      - name: Return Unity license
+        if: always()
+        timeout-minutes: 4
+        env:
+          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+        run: |
+          [ -x /Applications/Unity/Unity.app/Contents/MacOS/Unity ] || exit 0
+          ci/unity.sh /tmp/return.log 150 "" -quit -returnlicense -username "$UNITY_EMAIL" -password "$UNITY_PASSWORD" || true
+          rm -f /tmp/return.log
+
+      - name: Xcode build (unsigned)
+        run: |
+          set -euo pipefail
+          cd xcode
+          set +e
+          xcodebuild -project Unity-iPhone.xcodeproj -scheme Unity-iPhone -configuration Release \
+            -sdk iphoneos -derivedDataPath "$PWD/dd" \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" DEVELOPMENT_TEAM="" \
+            ENABLE_BITCODE=NO build > ../xcodebuild.log 2>&1
+          rc=$?
+          set -e
+          grep -E "error:|\*\* BUILD" ../xcodebuild.log | cut -c1-200 | head -n 40 || true
+          exit $rc
+
+      # Fakesign for TrollStore, with the increased-memory entitlements.
+      - name: Fakesign (ldid)
+        run: |
+          set -euo pipefail
+          brew list ldid >/dev/null 2>&1 || brew install ldid
+          APP="$(find xcode/dd -name '*.app' -path '*Release-iphoneos*' | head -n 1)"
+          find "$APP/Frameworks" -name '*.framework' -maxdepth 1 | while read -r fw; do
+            ldid -S "$fw/$(basename "$fw" .framework)"
+          done
+          ldid -S"$PWD/ci/entitlements.plist" "$APP/$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$APP/Info.plist")"
+
+      - name: Package IPA
+        run: |
+          set -euo pipefail
+          APP="$(find xcode/dd -name '*.app' -path '*Release-iphoneos*' | head -n 1)"
+          rm -rf Payload && mkdir Payload && cp -R "$APP" Payload/
+          zip -qry RickAndMortyVR-iOS.ipa Payload
+          ls -lh RickAndMortyVR-iOS.ipa | awk '{print "IPA", $5}'
+
+      - name: Publish IPA (private repo)
+        env:
+          GH_TOKEN: ${{ secrets.PRIVATE_REPO_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG=game-latest
+          NOTES="Flat iOS build of the game, run ${{ github.run_number }} / ${{ github.sha }}"
+          if gh release view "$TAG" --repo "$PRIVATE_REPO" >/dev/null 2>&1; then
+            gh release upload "$TAG" RickAndMortyVR-iOS.ipa --clobber --repo "$PRIVATE_REPO"
+            gh release edit "$TAG" --notes "$NOTES" --repo "$PRIVATE_REPO"
+          else
+            gh release create "$TAG" RickAndMortyVR-iOS.ipa --title "Virtual Rick-ality iOS (flat)" --notes "$NOTES" --prerelease --repo "$PRIVATE_REPO"
+          fi
+
+      # Full logs (they name game assets) go to the private repo only, success or not.
+      - name: Publish logs (private repo)
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.PRIVATE_REPO_TOKEN }}
+        run: |
+          set +e
+          for f in unity.log xcodebuild.log; do
+            [ -f "$f" ] || continue
+            sed -i '' -E 's/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/<email>/g; s/[A-Z0-9]{2}-[A-Z0-9]{4}-[A-Z0-9X-]{4,}/<serial>/g' "$f"
+            gzip -9 -c "$f" > "$f.gz"
+          done
+          gh release view build-logs --repo "$PRIVATE_REPO" >/dev/null 2>&1 ||
+            gh release create build-logs --title "Build logs" --notes "Latest CI logs" --prerelease --repo "$PRIVATE_REPO"
+          ls *.log.gz >/dev/null 2>&1 && gh release upload build-logs *.log.gz --clobber --repo "$PRIVATE_REPO"
+          gh release edit build-logs --notes "Logs of run ${{ github.run_number }} (${{ job.status }})" --repo "$PRIVATE_REPO"
+          exit 0

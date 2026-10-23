@@ -12,3 +12,5 @@ spike/Temp/
 spike/ProjectSettings/
 spike/Assets/Scenes/
 *.meta
+!game/Assets/Scripts/Flat/*.meta
+__pycache__/
