@@ -139,6 +139,24 @@ jobs:
           rm -f /tmp/activate.log
           exit $rc
 
+      # Unity's Library folder (assets already converted for iPhone) from an earlier run, kept in the PRIVATE
+      # repo's releases, never in a GitHub cache. Delete the unity-library release to force a full re-convert.
+      - name: Restore converted-asset Library (private repo)
+        id: library
+        env:
+          GH_TOKEN: ${{ secrets.PRIVATE_REPO_TOKEN }}
+        run: |
+          set +e
+          mkdir -p /tmp/lib
+          if gh release download unity-library --repo "$PRIVATE_REPO" --pattern 'library.tar.zst.part-*' --dir /tmp/lib; then
+            du -sh /tmp/lib | awk '{print "Library download", $1}'
+            cat /tmp/lib/library.tar.zst.part-* | zstd -d --long=27 -q -c | tar -x -C private/project && echo "restored=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "no saved Library yet - full conversion this run"
+          fi
+          rm -rf /tmp/lib
+          df -h / | tail -1
+
       - name: Unity build (Xcode project)
         timeout-minutes: 240
         env:
@@ -168,6 +186,23 @@ jobs:
           [ -x /Applications/Unity/Unity.app/Contents/MacOS/Unity ] || exit 0
           ci/unity.sh /tmp/return.log 150 "" -quit -returnlicense -username "$UNITY_EMAIL" -password "$UNITY_PASSWORD" || true
           rm -f /tmp/return.log
+
+      # First successful conversion: keep the Library for later runs (split under GitHub's 2 GB asset limit).
+      - name: Save converted-asset Library (private repo)
+        if: steps.library.outputs.restored != 'true' && hashFiles('xcode/Unity-iPhone.xcodeproj/project.pbxproj') != ''
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.PRIVATE_REPO_TOKEN }}
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/libout
+          tar -C private/project --exclude Library/Il2cppBuildCache --exclude Library/Bee -cf - Library |
+            zstd -3 -T0 --long=27 -q -c | split -b 1900m - /tmp/libout/library.tar.zst.part-
+          du -sh /tmp/libout | awk '{print "Library upload", $1}'
+          gh release view unity-library --repo "$PRIVATE_REPO" >/dev/null 2>&1 ||
+            gh release create unity-library --title "Unity Library cache" --notes "Converted assets, reused by CI" --prerelease --repo "$PRIVATE_REPO"
+          gh release upload unity-library /tmp/libout/library.tar.zst.part-* --clobber --repo "$PRIVATE_REPO"
+          rm -rf /tmp/libout
 
       - name: Xcode build (unsigned)
         run: |
