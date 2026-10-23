@@ -150,7 +150,7 @@ jobs:
           echo "---- native strings"
           strings -a /Applications/Unity/Unity.app/Contents/MacOS/Unity | grep -n -i "platform support module\|not supported in this Unity build\|PlaybackEngines\|Extensions.dll\|iOSSupport" | head -n 40
           python3 -m pip install --quiet --break-system-packages lief capstone || python3 -m pip install --quiet lief capstone
-          python3 ci/xref.py /Applications/Unity/Unity.app/Contents/MacOS/Unity "Register platform support module" "Platform support module is not available" "not supported in this Unity build" 0x103e00600-0x103e00840 > /tmp/xref.txt 2>&1 || true
+          python3 ci/xref.py /Applications/Unity/Unity.app/Contents/MacOS/Unity call:0x1015e54a0 dump:0x1018a8f90 > /tmp/xref.txt 2>&1 || true
           head -c 60000 /tmp/xref.txt
 
       # Non-secret facts about the license file, to see whether it is a Unity 5-era or modern license.

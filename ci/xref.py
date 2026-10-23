@@ -1,7 +1,10 @@
 # Prints the machine code around every place a Mach-O x86_64 binary refers to the given C strings or addresses.
 # Used to see what Unity's editor checks before it registers a platform module.
-# Usage: python3 xref.py <binary> <text or 0xSTART-0xEND> ...
-# A text matches every C string that contains it; an address range matches any RIP-relative access inside it.
+# Usage: python3 xref.py <binary> <query> ...
+#   text              every C string that contains it
+#   0xSTART-0xEND     any RIP-relative access inside the range
+#   call:0xADDR       direct calls and jumps to ADDR
+#   dump:0xADDR       220 instructions starting at ADDR
 import sys
 import lief
 from capstone import Cs, CS_ARCH_X86, CS_MODE_64
@@ -17,7 +20,15 @@ cstr = binary.get_section("__cstring")
 cdata = bytes(cstr.content)
 targets = {}
 ranges = []
+calls = set()
+dumps = []
 for s in sys.argv[2:]:
+    if s.startswith("call:"):
+        calls.add(int(s[5:], 16))
+        continue
+    if s.startswith("dump:"):
+        dumps.append(int(s[5:], 16))
+        continue
     if s.startswith("0x") and "-" in s:
         lo, hi = (int(x, 16) for x in s.split("-"))
         ranges.append((lo, hi, s))
@@ -54,7 +65,27 @@ def label(addr):
     return names.get(addr, "")
 
 
+def show(idx, before, after):
+    for j in range(max(0, idx - before), min(len(insns), idx + after)):
+        k = insns[j]
+        extra = ""
+        if k.mnemonic in ("call", "jmp") and k.op_str.startswith("0x"):
+            extra = "  ; " + label(int(k.op_str, 16))
+        print("%#x: %-6s %s%s%s" % (k.address, k.mnemonic, k.op_str, extra, "   <<<<" if j == idx else ""))
+
+
+if dumps:
+    index = {ins.address: i for i, ins in enumerate(insns)}
+    for d in dumps:
+        print("\n==== dump of %#x %s" % (d, label(d)))
+        if d in index:
+            show(index[d], 0, 220)
+
 for idx, ins in enumerate(insns):
+    if calls and ins.mnemonic in ("call", "jmp") and ins.op_str.startswith("0x") and int(ins.op_str, 16) in calls:
+        print("\n==== call to %s at %#x" % (ins.op_str, ins.address))
+        show(idx, 60, 10)
+        continue
     if "rip" not in ins.op_str:
         continue
     try:
@@ -65,9 +96,4 @@ for idx, ins in enumerate(insns):
     if hit is None:
         continue
     print("\n==== %r referenced at %#x" % (hit, ins.address))
-    for j in range(max(0, idx - 120), min(len(insns), idx + 25)):
-        k = insns[j]
-        extra = ""
-        if k.mnemonic == "call" and k.op_str.startswith("0x"):
-            extra = "  ; " + label(int(k.op_str, 16))
-        print("%#x: %-6s %s%s%s" % (k.address, k.mnemonic, k.op_str, extra, "   <<<<" if j == idx else ""))
+    show(idx, 120, 25)
