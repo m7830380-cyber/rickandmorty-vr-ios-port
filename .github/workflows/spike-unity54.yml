@@ -139,9 +139,8 @@ jobs:
           ls -la "$PE/iOSSupport" | head -n 40
           echo "---- iOS ivy.xml"; cat "$PE/iOSSupport/ivy.xml"
           echo "---- Mac ivy.xml"; cat "$PE/MacStandaloneSupport/ivy.xml"
-          dotnet --list-sdks; dotnet --list-runtimes
           dotnet tool install -g ilspycmd --version 8.2.0.7535 || dotnet tool install -g ilspycmd || true
-          export PATH="$PATH:$HOME/.dotnet/tools" DOTNET_ROLL_FORWARD=Major
+          export PATH="$PATH:$HOME/.dotnet/tools" DOTNET_ROLL_FORWARD=Major DOTNET_ROOT="$HOME/.dotnet"
           ilspycmd -t UnityEditor.Modules.ModuleManager /Applications/Unity/Unity.app/Contents/Managed/UnityEditor.dll > /tmp/mm.cs 2>&1 || true
           wc -l /tmp/mm.cs; head -n 25 /tmp/mm.cs
           grep -n -B40 -A25 "Register platform support module" /tmp/mm.cs | head -n 200
