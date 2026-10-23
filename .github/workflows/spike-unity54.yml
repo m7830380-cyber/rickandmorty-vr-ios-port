@@ -159,8 +159,7 @@ jobs:
           # Printed with a prefix so GitHub's secret masking (which hides whole secret lines) leaves them readable.
           printf '%s' "$UNITY_LICENSE" | grep -oE '<(LicenseVersion|ClientProvidedVersion|InitialActivationDate|StartDate|StopDate|UpdateDate|SerialMasked)[^>]*>' | sed 's/^/field: /' || true
           printf '%s' "$UNITY_LICENSE" | grep -oE '<Binding Key="[0-9]+"' | sed 's/^/machine binding: /' || true
-          printf '%s' "$UNITY_LICENSE" | grep -oE '<[A-Za-z]+' | sort | uniq -c | tr '
-' ' '; echo
+          printf '%s' "$UNITY_LICENSE" | grep -oE '<[A-Za-z]+' | sort | uniq -c | xargs echo
           printf '%s' "$UNITY_LICENSE" | grep -oE '<Feature Value="[0-9]+"' | tr '\n' ' '; echo
 
       # Unity 5 licenses inside the editor process (no Licensing Client). Try, in order:
