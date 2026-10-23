@@ -14,7 +14,10 @@ INJECT=""; [ -n "$UNITY_DYLD" ] && INJECT="env DYLD_INSERT_LIBRARIES=$UNITY_DYLD
 rm -f "$LOG"; touch "$LOG"
 $ARCH $INJECT "$UNITY" -batchmode -nographics -logFile "$LOG" "$@" &
 PID=$!
-tail -n +1 -f "$LOG" > >(grep --line-buffered -iE "licens|error|exception|build|\[RMVR|compil|exiting" | cut -c1-300) &
+# The job log is public: serial numbers and email addresses are blanked before printing.
+tail -n +1 -f "$LOG" > >(grep --line-buffered -iE "licens|error|exception|build|\[RMVR|compil|exiting" |
+  sed -l -E 's/[A-Z0-9]{2}-[A-Z0-9]{4}-[A-Z0-9X-]{4,}/<serial>/g; s/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/<email>/g' |
+  cut -c1-300) &
 TAILPID=$!
 start=$SECONDS; rc=""
 while kill -0 $PID 2>/dev/null; do

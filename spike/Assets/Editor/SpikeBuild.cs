@@ -50,6 +50,14 @@ public static class SpikeBuild
         }
     }
 
+    // The log is public: drop email addresses and anything shaped like a serial number.
+    static string Redact(string s)
+    {
+        if (s == null) return "(null)";
+        s = System.Text.RegularExpressions.Regex.Replace(s, @"[\w.+-]+@[\w.-]+\.\w+", "<email>");
+        return System.Text.RegularExpressions.Regex.Replace(s, @"\b[A-Z0-9]{2}-[A-Z0-9]{4}-[A-Z0-9-]+", "<serial>");
+    }
+
     // Logs what the editor believes about its license: every parameterless bool/string/int licence query on
     // InternalEditorUtility, plus whether iOS counts as supported. Only results, never license contents.
     static void LicenseReport()
@@ -66,6 +74,10 @@ public static class SpikeBuild
             {
                 if (ps.Length == 0 && (m.ReturnType == typeof(bool) || m.ReturnType == typeof(int) || m.ReturnType.IsEnum))
                     Debug.Log("[RMVR] license " + n + "() = " + m.Invoke(null, null));
+                else if (ps.Length == 0 && m.ReturnType == typeof(int[]))
+                    Debug.Log("[RMVR] license " + n + "() = [" + string.Join(",", Array.ConvertAll((int[])m.Invoke(null, null), x => x.ToString())) + "]");
+                else if (ps.Length == 0 && m.ReturnType == typeof(string))
+                    Debug.Log("[RMVR] license " + n + "() = " + Redact((string)m.Invoke(null, null)));
                 else if (ps.Length == 1 && ps[0].ParameterType == typeof(BuildTarget) && m.ReturnType == typeof(bool))
                     Debug.Log("[RMVR] license " + n + "(iOS) = " + m.Invoke(null, new object[] { BuildTarget.iOS }));
                 else

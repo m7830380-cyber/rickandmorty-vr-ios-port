@@ -232,7 +232,7 @@ jobs:
           SHELL_OUT: /Volumes/U/xcode
         run: |
           set +e
-          ci/unity.sh "$PWD/unity.log" 2400 "" -quit -projectPath /Volumes/U/spike -executeMethod SpikeBuild.Build
+          ci/unity.sh "$PWD/unity.log" 2400 "" -quit -force-free -projectPath /Volumes/U/spike -executeMethod SpikeBuild.Build
           rc=$?
           echo "---- error lines"; grep -n -iE "error|exception|failed|licens" unity.log | head -n 80
           echo "---- last lines"; tail -n 40 unity.log
