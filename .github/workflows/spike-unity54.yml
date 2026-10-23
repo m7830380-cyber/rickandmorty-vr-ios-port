@@ -144,8 +144,11 @@ jobs:
           ilspycmd -t UnityEditor.Modules.ModuleManager /Applications/Unity/Unity.app/Contents/Managed/UnityEditor.dll > /tmp/mm.cs 2>&1 || true
           wc -l /tmp/mm.cs; head -n 25 /tmp/mm.cs
           grep -n -B40 -A25 "Register platform support module" /tmp/mm.cs | head -n 200
-          echo "---- IsPlatformSupportLoaded / target strings"
-          grep -n -A20 "static bool IsPlatformSupportLoaded\|static string GetTargetStringFromBuildTarget(" /tmp/mm.cs | head -n 90
+          for m in RegisterPackageManager InitializePackageManager RegisterPlatformSupportModules RegisterModulesFromLoadedAssemblies RegisterPlatformSupportModulesFromAssembly InitializePlatformSupportModules; do
+            echo "---- $m"; awk -v m="$m" '$0 ~ ("static [^(]* " m "[<(]") {p=1} p {print NR": "$0} p && /^	}$/ {p=0}' /tmp/mm.cs | head -n 90
+          done
+          echo "---- native strings"
+          strings -a /Applications/Unity/Unity.app/Contents/MacOS/Unity | grep -n -i "platform support module\|not supported in this Unity build\|PlaybackEngines\|Extensions.dll\|iOSSupport" | head -n 40
 
       # Non-secret facts about the license file, to see whether it is a Unity 5-era or modern license.
       - name: Inspect license file
