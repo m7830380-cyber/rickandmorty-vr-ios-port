@@ -28,6 +28,13 @@ jobs:
           cp "$M"/UnityEngine/*.dll "$M"/UnityEditor.dll refs/
           tar -czf unity-2020.3.1f1-refs.tar.gz refs
           ls -lh unity-2020.3.1f1-refs.tar.gz
+          # The iOS player is compiled against stripped engine assemblies (no editor-only members).
+          find /Applications/Unity -name UnityEngine.CoreModule.dll -not -path "*/Contents/Managed/*"
+          D=$(dirname "$(find /Applications/Unity/PlaybackEngines/iOSSupport -name UnityEngine.CoreModule.dll | head -1)")
+          echo "iOS player refs: $D"
+          mkdir ios-refs; cp "$D"/*.dll ios-refs/
+          tar -czf unity-2020.3.1f1-ios-refs.tar.gz ios-refs
+          ls -lh unity-2020.3.1f1-ios-refs.tar.gz
           gh release view tools --repo m7830380-cyber/rmvr-ios-private >/dev/null 2>&1 ||
             gh release create tools --title "Build tools" --notes "Unity reference assemblies" --repo m7830380-cyber/rmvr-ios-private
-          gh release upload tools unity-2020.3.1f1-refs.tar.gz --clobber --repo m7830380-cyber/rmvr-ios-private
+          gh release upload tools unity-2020.3.1f1-refs.tar.gz unity-2020.3.1f1-ios-refs.tar.gz --clobber --repo m7830380-cyber/rmvr-ios-private
