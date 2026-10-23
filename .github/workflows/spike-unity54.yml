@@ -149,9 +149,6 @@ jobs:
           done
           echo "---- native strings"
           strings -a /Applications/Unity/Unity.app/Contents/MacOS/Unity | grep -n -i "platform support module\|not supported in this Unity build\|PlaybackEngines\|Extensions.dll\|iOSSupport" | head -n 40
-          python3 -m pip install --quiet --break-system-packages lief capstone || python3 -m pip install --quiet lief capstone
-          python3 ci/xref.py /Applications/Unity/Unity.app/Contents/MacOS/Unity dump:0x1018a5de0 > /tmp/xref.txt 2>&1 || true
-          head -c 60000 /tmp/xref.txt
 
       # Non-secret facts about the license file, to see whether it is a Unity 5-era or modern license.
       - name: Inspect license file
@@ -159,7 +156,11 @@ jobs:
           UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
         run: |
           [ -n "$UNITY_LICENSE" ] || { echo "UNITY_LICENSE secret is not set"; exit 0; }
-          printf '%s' "$UNITY_LICENSE" | grep -oE '<(LicenseVersion|ClientProvidedVersion|InitialActivationDate|StartDate|StopDate|UpdateDate)[^>]*>' || true
+          # Printed with a prefix so GitHub's secret masking (which hides whole secret lines) leaves them readable.
+          printf '%s' "$UNITY_LICENSE" | grep -oE '<(LicenseVersion|ClientProvidedVersion|InitialActivationDate|StartDate|StopDate|UpdateDate|SerialMasked)[^>]*>' | sed 's/^/field: /' || true
+          printf '%s' "$UNITY_LICENSE" | grep -oE '<Binding Key="[0-9]+"' | sed 's/^/machine binding: /' || true
+          printf '%s' "$UNITY_LICENSE" | grep -oE '<[A-Za-z]+' | sort | uniq -c | tr '
+' ' '; echo
           printf '%s' "$UNITY_LICENSE" | grep -oE '<Feature Value="[0-9]+"' | tr '\n' ' '; echo
 
       # Unity 5 licenses inside the editor process (no Licensing Client). Try, in order:
@@ -197,6 +198,7 @@ jobs:
           rc=$?
           echo "exit $rc"; grep -iE "licens|activat|serial" /tmp/activate2.log | head -n 60
           ls -la "/Library/Application Support/Unity"
+          ls -laR "$HOME/Library/Logs/Unity" "$HOME/Library/Unity" 2>/dev/null | head -n 40
           exit $rc
 
       - name: Unity build (Xcode project)

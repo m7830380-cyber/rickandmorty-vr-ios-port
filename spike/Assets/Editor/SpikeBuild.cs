@@ -31,6 +31,7 @@ public static class SpikeBuild
             PlayerSettings.defaultInterfaceOrientation = UIOrientation.LandscapeLeft;
             PlayerSettings.statusBarHidden = true;
 
+            LicenseReport();
             Debug.Log("[RMVR] building iOS project to " + outDir);
             string err = BuildPipeline.BuildPlayer(new[] { "Assets/Scenes/Main.unity" }, outDir, BuildTarget.iOS, BuildOptions.None);
             if (!string.IsNullOrEmpty(err))
@@ -46,6 +47,41 @@ public static class SpikeBuild
         {
             Debug.LogError("[RMVR] BUILD EXCEPTION: " + e);
             EditorApplication.Exit(1);
+        }
+    }
+
+    // Logs what the editor believes about its license: every parameterless bool/string/int licence query on
+    // InternalEditorUtility, plus whether iOS counts as supported. Only results, never license contents.
+    static void LicenseReport()
+    {
+        var t = typeof(UnityEditorInternal.InternalEditorUtility);
+        foreach (var m in t.GetMethods(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static))
+        {
+            string n = m.Name;
+            bool relevant = n.IndexOf("Licen", StringComparison.OrdinalIgnoreCase) >= 0 || n.StartsWith("HasPro") ||
+                            n.StartsWith("HasAdvanced") || n.StartsWith("HasTeam") || n.StartsWith("HasFree") || n.StartsWith("IsUnityBeta");
+            if (!relevant) continue;
+            var ps = m.GetParameters();
+            try
+            {
+                if (ps.Length == 0 && (m.ReturnType == typeof(bool) || m.ReturnType == typeof(int) || m.ReturnType.IsEnum))
+                    Debug.Log("[RMVR] license " + n + "() = " + m.Invoke(null, null));
+                else if (ps.Length == 1 && ps[0].ParameterType == typeof(BuildTarget) && m.ReturnType == typeof(bool))
+                    Debug.Log("[RMVR] license " + n + "(iOS) = " + m.Invoke(null, new object[] { BuildTarget.iOS }));
+                else
+                    Debug.Log("[RMVR] license method " + m.ReturnType.Name + " " + n + "(" + ps.Length + " args)");
+            }
+            catch (Exception e)
+            {
+                Debug.Log("[RMVR] license " + n + " threw " + e.GetBaseException().Message);
+            }
+        }
+        foreach (var m in typeof(BuildPipeline).GetMethods(System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static))
+        {
+            var ps = m.GetParameters();
+            if (m.Name != "IsBuildTargetSupported" || ps.Length != 1 || ps[0].ParameterType != typeof(BuildTarget)) continue;
+            try { Debug.Log("[RMVR] IsBuildTargetSupported(iOS) = " + m.Invoke(null, new object[] { BuildTarget.iOS })); }
+            catch (Exception e) { Debug.Log("[RMVR] IsBuildTargetSupported threw " + e.GetBaseException().Message); }
         }
     }
 }
