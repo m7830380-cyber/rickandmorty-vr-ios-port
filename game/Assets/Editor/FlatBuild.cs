@@ -27,7 +27,7 @@ public static class FlatBuild
             PlayerSettings.iOS.targetOSVersionString = "12.0";
             PlayerSettings.SetUseDefaultGraphicsAPIs(BuildTarget.iOS, false);
             PlayerSettings.SetGraphicsAPIs(BuildTarget.iOS, new[] { UnityEngine.Rendering.GraphicsDeviceType.Metal });
-            PlayerSettings.defaultInterfaceOrientation = UIDefaultOrientation.LandscapeLeft;
+            PlayerSettings.defaultInterfaceOrientation = UIOrientation.LandscapeLeft;
             PlayerSettings.statusBarHidden = true;
 
             Debug.Log("[RMVR] building iOS project to " + outDir);
