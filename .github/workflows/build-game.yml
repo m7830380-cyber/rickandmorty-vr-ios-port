@@ -187,9 +187,9 @@ jobs:
           ci/unity.sh /tmp/return.log 150 "" -quit -returnlicense -username "$UNITY_EMAIL" -password "$UNITY_PASSWORD" || true
           rm -f /tmp/return.log
 
-      # First successful conversion: keep the Library for later runs (split under GitHub's 2 GB asset limit).
+      # First conversion (even if the player build fails afterwards): keep the Library for later runs (split under GitHub's 2 GB asset limit).
       - name: Save converted-asset Library (private repo)
-        if: steps.library.outputs.restored != 'true' && hashFiles('xcode/Unity-iPhone.xcodeproj/project.pbxproj') != ''
+        if: always() && steps.library.outputs.restored != 'true' && hashFiles('private/project/Library/ArtifactDB') != ''
         continue-on-error: true
         env:
           GH_TOKEN: ${{ secrets.PRIVATE_REPO_TOKEN }}

@@ -34,6 +34,8 @@ public static class FlatBuild
             PlayerSettings.iOS.targetOSVersionString = "13.0";
             PlayerSettings.iOS.requiresFullScreen = true;
             PlayerSettings.iOS.hideHomeButton = true;
+            // the game references UnityEngine.Microphone (Troy mission); iOS requires a usage string or the build fails
+            PlayerSettings.iOS.microphoneUsageDescription = "Used by in-game microphone props.";
             PlayerSettings.iOS.deferSystemGesturesMode = UnityEngine.iOS.SystemGestureDeferMode.All;
             PlayerSettings.SetUseDefaultGraphicsAPIs(BuildTarget.iOS, false);
             PlayerSettings.SetGraphicsAPIs(BuildTarget.iOS, new[] { UnityEngine.Rendering.GraphicsDeviceType.Metal });
