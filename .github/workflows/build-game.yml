@@ -152,6 +152,8 @@ jobs:
           grep -E "error CS[0-9]+" unity.log | sed -E 's/^.*Assets\//Assets\//' | cut -c1-220 | sort -u | head -n 40
           echo "---- shader errors"
           grep -E "Shader error|shader compiler" unity.log | cut -c1-200 | sort -u | head -n 20
+          echo "---- assembly / package problems"
+          grep -E "already exists|Assembly .* has reference|Precompiled assembly|Failed to resolve|error: " unity.log | grep -v "Start importing" | cut -c1-220 | sort -u | head -n 20
           grep -E "\[RMVR\]" unity.log | cut -c1-300
           [ -f xcode/Unity-iPhone.xcodeproj/project.pbxproj ] || { echo "no Xcode project produced"; exit 1; }
           exit $rc

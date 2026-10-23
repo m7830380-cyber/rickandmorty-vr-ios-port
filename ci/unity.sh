@@ -15,7 +15,7 @@ rm -f "$LOG"; touch "$LOG"
 $ARCH $INJECT "$UNITY" -batchmode -nographics -logFile "$LOG" "$@" &
 PID=$!
 # The job log is public: serial numbers and email addresses are blanked before printing.
-tail -n +1 -f "$LOG" > >(grep --line-buffered -iE "licens|error|exception|build|\[RMVR|compil|exiting" |
+tail -n +1 -f "$LOG" > >(grep --line-buffered -v "Start importing" | grep --line-buffered -iE "licens|error|exception|build|\[RMVR|compil|exiting" |
   sed -l -E 's/[A-Z0-9]{2}-[A-Z0-9]{4}-[A-Z0-9X-]{4,}/<serial>/g; s/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/<email>/g' |
   cut -c1-300) &
 TAILPID=$!
