@@ -1,0 +1,33 @@
+name: Unity 2020.3 reference DLLs
+
+# Copies Unity 2020.3.1f1's engine assemblies (Unity's files, nothing from the game) to the private repo
+# so scripts can be compile-checked on the PC against the same API the CI build uses.
+on: workflow_dispatch
+
+permissions:
+  contents: read
+
+jobs:
+  refs:
+    runs-on: macos-14
+    steps:
+      - name: Restore Unity install
+        uses: actions/cache/restore@v4
+        with:
+          path: /Applications/Unity
+          key: unity-2020.3.1f1-ios-x64-v1
+          fail-on-cache-miss: true
+
+      - name: Pack and publish
+        env:
+          GH_TOKEN: ${{ secrets.PRIVATE_REPO_TOKEN }}
+        run: |
+          set -euo pipefail
+          M=/Applications/Unity/Unity.app/Contents/Managed
+          mkdir refs
+          cp "$M"/UnityEngine/*.dll "$M"/UnityEditor.dll refs/
+          tar -czf unity-2020.3.1f1-refs.tar.gz refs
+          ls -lh unity-2020.3.1f1-refs.tar.gz
+          gh release view tools --repo m7830380-cyber/rmvr-ios-private >/dev/null 2>&1 ||
+            gh release create tools --title "Build tools" --notes "Unity reference assemblies" --repo m7830380-cyber/rmvr-ios-private
+          gh release upload tools unity-2020.3.1f1-refs.tar.gz --clobber --repo m7830380-cyber/rmvr-ios-private
