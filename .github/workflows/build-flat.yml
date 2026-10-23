@@ -102,7 +102,7 @@ jobs:
         timeout-minutes: 75
         env:
           SHELL_OUT: ${{ github.workspace }}/xcode
-                  run: |
+        run: |
           set +e
           ci/unity.sh "$PWD/unity.log" 4200 "" -quit -projectPath "$PWD/game" -buildTarget iOS -executeMethod FlatBuild.Build
           rc=$?
