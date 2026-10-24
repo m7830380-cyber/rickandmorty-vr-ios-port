@@ -9,9 +9,12 @@ using UnityEngine;
 //                        otherwise pokes it (buttons, switches, characters)
 //   swipe while holding  throw the held item in the swipe direction
 //   USE L / USE R        squeeze / use what that hand holds (spray, eat, fire...)
+//   GRIP L / GRIP R      close that hand where it is while held (grab what it touches), open it on release
 //   DROP L / DROP R      let go
+//   HAND L / HAND R      while on, drags move that hand instead of the camera (for levers, drawers)
+//   EXT / RET L, R       push that hand further out / pull it back in while held
 //   TELEPORT (hold)      aim with the crosshair at a teleport spot, release to jump there
-//   CROUCH, HAND         crouch; HAND mode: drags move the right hand instead of the camera (for levers, drawers)
+//   CROUCH               crouch
 //   MENU                 the game's own menu button; the gear opens the flat settings
 // The game's own rig, hands and interaction code do everything else; this only says where the head and hands
 // are and which wand buttons are pressed.
@@ -34,6 +37,8 @@ public class FlatControls : MonoBehaviour
         public Vector3 pos;
         public Quaternion rot = Quaternion.identity;
         public bool initialised;
+        public bool manual;    // placed with EXT / RET: stays where it was put until DROP or a tap
+        public bool gripping;
     }
 
     class Button
@@ -66,6 +71,7 @@ public class FlatControls : MonoBehaviour
     float toastUntil;
     float fps = 60f;
     Rect fpsRect;
+    bool logMenuState, teleportWasHeld;
 
     public static FlatControls Instance { get; private set; }
 
@@ -76,9 +82,10 @@ public class FlatControls : MonoBehaviour
         settings.Apply();
         Input.multiTouchEnabled = true;
         Screen.sleepTimeout = SleepTimeout.NeverSleep;
-        foreach (var name in new[] { "USE L", "DROP L", "USE R", "DROP R", "TELEPORT", "CROUCH", "HAND", "MENU", "SET" })
+        foreach (var name in new[] { "USE L", "GRIP L", "DROP L", "HAND L", "EXT L", "RET L",
+                                     "USE R", "GRIP R", "DROP R", "HAND R", "EXT R", "RET R", "TELEPORT", "CROUCH", "MENU", "SET" })
         {
-            var b = new Button { label = name, toggle = name == "CROUCH" || name == "HAND" };
+            var b = new Button { label = name, toggle = name == "CROUCH" || name == "HAND L" || name == "HAND R" };
             buttons[name] = b;
             order.Add(b);
         }
@@ -118,6 +125,38 @@ public class FlatControls : MonoBehaviour
         for (int i = 0; i < 2; i++) UpdateHand(i);
         for (int i = 0; i < 2; i++)
             if (hands[i] != null && hands[i].input != null) hands[i].input.Tick();
+        // teleports aim where the crosshair is, not where the hand points
+        if (GlobalStorage.no_instantiate_instance != null && GlobalStorage.Instance.TeleportationController != null)
+            GlobalStorage.Instance.TeleportationController.UseGaze = true;
+        if (logMenuState)
+        {
+            logMenuState = false;
+            LogMenuState();
+        }
+    }
+
+    // MENU should open Freb's window; this says why when it does not
+    void LogMenuState()
+    {
+        string menus = "";
+        foreach (var m in FindObjectsOfType<FrebsMenuController>(true))
+            menus += " '" + m.name + "' active=" + m.gameObject.activeInHierarchy + " enabled=" + m.enabled;
+        Debug.Log("[RMVR] MENU pressed: game sees it=" + rig.Hands[1].TrackedController.GetButtonDown(TrackedController.ControllerButton.Menu) +
+                  " same controller=" + (rig.Hands[1].TrackedController == hands[1].input) + " paused=" + rig.IsPaused +
+                  " Freb's menus:" + (menus == "" ? " none in this scene" : menus));
+    }
+
+    void LogTeleportState(string when)
+    {
+        var tc = GlobalStorage.no_instantiate_instance != null ? GlobalStorage.Instance.TeleportationController : null;
+        if (tc == null)
+        {
+            Debug.Log("[RMVR] TELEPORT " + when + ": no teleport controller");
+            return;
+        }
+        var zone = tc.SeekTargetZone(cam.transform.position, cam.transform.forward, 10f);
+        Debug.Log("[RMVR] TELEPORT " + when + ": allowed=" + tc.CanTeleport + " spots=" + tc.Zones.Count +
+                  " aiming at " + (zone != null ? "'" + zone.name + "'" : "nothing"));
     }
 
     // ---------------------------------------------------------------- input
@@ -140,14 +179,25 @@ public class FlatControls : MonoBehaviour
     {
         float u = Unit, g = u * 0.15f;
         Rect s = Safe;
-        float right = s.xMax - g, bottom = s.yMax - g;
-        Place("USE R", right - u * 1.6f, bottom - u * 1.6f, u * 1.6f, u * 1.6f);
-        Place("DROP R", right - u * 2.9f - g, bottom - u * 1.1f, u * 1.3f, u * 1.1f);
-        Place("TELEPORT", right - u * 1.6f, bottom - u * 2.7f - g, u * 1.6f, u);
-        Place("HAND", right - u * 1.6f, bottom - u * 3.7f - g * 2, u * 1.6f, u * 0.9f);
-        Place("CROUCH", right - u * 1.6f, bottom - u * 4.6f - g * 3, u * 1.6f, u * 0.9f);
-        Place("USE L", s.x + g, s.y + u * 0.9f, u * 1.4f, u * 1.2f);
-        Place("DROP L", s.x + g, s.y + u * 2.2f + g, u * 1.4f, u);
+        float w = u * 1.4f, right = s.xMax - g, bottom = s.yMax - g;
+        // right hand: two columns in the bottom right corner
+        float r1 = right - w, r2 = right - w * 2f - g;
+        Place("USE R", r1, bottom - u * 1.3f, w, u * 1.3f);
+        Place("DROP R", r2, bottom - u * 1.3f, w, u * 1.3f);
+        Place("GRIP R", r1, bottom - u * 2.3f - g, w, u);
+        Place("HAND R", r2, bottom - u * 2.3f - g, w, u);
+        Place("TELEPORT", r1, bottom - u * 3.2f - g * 2, w, u * 0.9f);
+        Place("EXT R", r2, bottom - u * 3.2f - g * 2, w, u * 0.9f);
+        Place("CROUCH", r1, bottom - u * 4f - g * 3, w, u * 0.8f);
+        Place("RET R", r2, bottom - u * 4f - g * 3, w, u * 0.8f);
+        // left hand: two columns under the fps counter
+        float l1 = s.x + g, l2 = l1 + w + g, top = s.y + u * 0.9f;
+        Place("USE L", l1, top, w, u);
+        Place("GRIP L", l2, top, w, u);
+        Place("DROP L", l1, top + u + g, w, u * 0.8f);
+        Place("HAND L", l2, top + u + g, w, u * 0.8f);
+        Place("EXT L", l1, top + u * 1.8f + g * 2, w, u * 0.8f);
+        Place("RET L", l2, top + u * 1.8f + g * 2, w, u * 0.8f);
         Place("MENU", s.center.x - u * 1.25f, s.y + g, u * 1.2f, u * 0.75f);
         Place("SET", s.center.x + u * 0.05f, s.y + g, u * 1.2f, u * 0.75f);
         fpsRect = new Rect(s.x + g, s.y + g, u * 1.8f, u * 0.6f);
@@ -195,7 +245,7 @@ public class FlatControls : MonoBehaviour
                     else b.held = true;
                     OnButtonPressed(b);
                 }
-                else if (gui.x < Screen.width * 0.4f && gui.y > Screen.height * 0.3f && stickFinger < 0)
+                else if (gui.x < Screen.width * 0.4f && gui.y > Screen.height * 0.35f && stickFinger < 0)
                 {
                     stickFinger = id;
                     stickOrigin = touch.position;
@@ -229,7 +279,7 @@ public class FlatControls : MonoBehaviour
                 Vector2 delta = touch.position - lookLast;
                 lookLast = touch.position;
                 if ((touch.position - lookStart).magnitude > Screen.height * 0.02f) lookMoved = true;
-                if (buttons["HAND"].on) MoveFreeHand(delta, 0f);
+                if (AnyHandMode) MoveFreeHands(delta, 0f);
                 else Look(delta);
                 if (ended)
                 {
@@ -241,7 +291,7 @@ public class FlatControls : MonoBehaviour
             {
                 Vector2 delta = touch.position - secondLast;
                 secondLast = touch.position;
-                if (buttons["HAND"].on) MoveFreeHand(Vector2.zero, delta.y);
+                if (AnyHandMode) MoveFreeHands(Vector2.zero, delta.y);
                 if (ended) secondFinger = -1;
             }
             else
@@ -269,28 +319,60 @@ public class FlatControls : MonoBehaviour
         {
             Hand h = hands[i];
             if (h == null || h.input == null) continue;
-            h.input.Set(Flat_TrackedInputController.Btn.Use, buttons[i == 0 ? "USE L" : "USE R"].held || KeyUse(i));
+            string side = i == 0 ? " L" : " R";
+            h.input.Set(Flat_TrackedInputController.Btn.Use, buttons["USE" + side].held || KeyUse(i));
             h.input.Set(Flat_TrackedInputController.Btn.Teleport, i == 1 && (buttons["TELEPORT"].held || Input.GetKey(KeyCode.Space)));
             h.input.Set(Flat_TrackedInputController.Btn.Menu, i == 1 && (buttons["MENU"].held || Input.GetKey(KeyCode.M)));
+            bool grip = buttons["GRIP" + side].held;
+            if (grip != h.gripping)
+            {
+                h.gripping = grip;
+                if (grip) h.input.Set(Flat_TrackedInputController.Btn.Grab, true);
+                else Release(i, false);
+            }
+            float extend = (buttons["EXT" + side].held ? 1f : 0f) - (buttons["RET" + side].held ? 1f : 0f);
+            if (extend != 0f) Extend(i, extend * Time.deltaTime);
         }
+        bool teleportHeld = buttons["TELEPORT"].held || Input.GetKey(KeyCode.Space);
+        if (teleportHeld != teleportWasHeld) LogTeleportState(teleportHeld ? "pressed" : "released");
+        teleportWasHeld = teleportHeld;
         crouched = buttons["CROUCH"].on;
+    }
+
+    bool AnyHandMode
+    {
+        get { return buttons["HAND L"].on || buttons["HAND R"].on; }
+    }
+
+    // the hand is placed by the player (HAND mode or EXT / RET) rather than resting at the side
+    bool FreeHand(int i)
+    {
+        return buttons[i == 0 ? "HAND L" : "HAND R"].on || hands[i] != null && hands[i].manual;
     }
 
     void OnButtonPressed(Button b)
     {
         switch (b.label)
         {
-            case "DROP L": Release(0); break;
-            case "DROP R": Release(1); break;
+            case "DROP L": Release(0, true); break;
+            case "DROP R": Release(1, true); break;
             case "SET": settingsOpen = true; break;
-            case "HAND":
-                Hand h = hands[1];
-                if (h != null && b.on)
+            case "MENU": logMenuState = true; break;
+            case "HAND L":
+            case "HAND R":
+                int i = b.label == "HAND L" ? 0 : 1;
+                Hand h = hands[i];
+                if (h == null) break;
+                if (b.on)
                 {
-                    h.freeOffset = RestOffset(1) + new Vector3(0f, 0.08f, 0.1f);
+                    h.freeOffset = RestOffset(i) + new Vector3(0f, 0.08f, 0.1f);
                     if (h.mode != HandMode.Hold) SetMode(h, HandMode.Free);
                 }
-                else if (h != null && h.mode == HandMode.Free) SetMode(h, HandMode.Rest);
+                else
+                {
+                    h.manual = false;
+                    if (h.mode == HandMode.Free) SetMode(h, HandMode.Rest);
+                }
                 break;
         }
     }
@@ -314,7 +396,7 @@ public class FlatControls : MonoBehaviour
             return;
         }
         // a quick flick while a hand holds something throws it (and undoes the look the flick caused)
-        if (dt < 0.3f && d.magnitude > Screen.height * 0.12f && !buttons["HAND"].on)
+        if (dt < 0.3f && d.magnitude > Screen.height * 0.12f && !AnyHandMode)
         {
             int side = lookStart.x < Screen.width * 0.5f ? 0 : 1;
             int i = IsHolding(side) ? side : IsHolding(1 - side) ? 1 - side : -1;
@@ -452,6 +534,7 @@ public class FlatControls : MonoBehaviour
             Toast("Too far: walk closer");
             return;
         }
+        h.manual = false;
         h.worldTarget = hit.point - ray.direction * 0.03f;
         h.throwDir = ray.direction;
         SetMode(h, HandMode.Reach);
@@ -473,12 +556,33 @@ public class FlatControls : MonoBehaviour
         return found;
     }
 
-    void Release(int i)
+    // DROP sends the hand back to its side; letting go of GRIP leaves it where it is
+    void Release(int i, bool backToSide)
     {
         Hand h = hands[i];
         if (h == null) return;
         if (h.input != null) h.input.Set(Flat_TrackedInputController.Btn.Grab, false);
-        SetMode(h, buttons["HAND"].on && i == 1 ? HandMode.Free : HandMode.Rest);
+        if (backToSide) h.manual = false;
+        SetMode(h, FreeHand(i) ? HandMode.Free : HandMode.Rest);
+    }
+
+    void Extend(int i, float amount)
+    {
+        Hand h = hands[i];
+        if (h == null) return;
+        if (!FreeHand(i))
+        {
+            h.freeOffset = cam.transform.InverseTransformPoint(h.pos);
+            h.manual = true;
+        }
+        if (h.mode != HandMode.Hold && h.mode != HandMode.Free) SetMode(h, HandMode.Free);
+        h.freeOffset.z += amount * 0.7f;
+        ClampFree(h);
+    }
+
+    static void ClampFree(Hand h)
+    {
+        h.freeOffset = new Vector3(Mathf.Clamp(h.freeOffset.x, -0.6f, 0.6f), Mathf.Clamp(h.freeOffset.y, -0.7f, 0.5f), Mathf.Clamp(h.freeOffset.z, 0.1f, 0.95f));
     }
 
     void Throw(int i, Vector3 dir, float speed)
@@ -488,14 +592,18 @@ public class FlatControls : MonoBehaviour
         SetMode(h, HandMode.Throw);
     }
 
-    void MoveFreeHand(Vector2 delta, float depth)
+    // drags move every hand whose HAND button is on
+    void MoveFreeHands(Vector2 delta, float depth)
     {
-        Hand h = hands[1];
-        if (h == null) return;
-        if (h.mode != HandMode.Free && h.mode != HandMode.Hold) SetMode(h, HandMode.Free);
         float k = 1.2f / Mathf.Max(Screen.height, 1);
-        h.freeOffset += new Vector3(delta.x * k, delta.y * k, depth * k);
-        h.freeOffset = new Vector3(Mathf.Clamp(h.freeOffset.x, -0.6f, 0.6f), Mathf.Clamp(h.freeOffset.y, -0.7f, 0.5f), Mathf.Clamp(h.freeOffset.z, 0.15f, 0.85f));
+        for (int i = 0; i < 2; i++)
+        {
+            Hand h = hands[i];
+            if (h == null || !buttons[i == 0 ? "HAND L" : "HAND R"].on) continue;
+            if (h.mode != HandMode.Free && h.mode != HandMode.Hold) SetMode(h, HandMode.Free);
+            h.freeOffset += new Vector3(delta.x * k, delta.y * k, depth * k);
+            ClampFree(h);
+        }
     }
 
     void UpdateHand(int i)
@@ -505,7 +613,8 @@ public class FlatControls : MonoBehaviour
         Transform ct = cam.transform;
         h.modeTime += Time.deltaTime;
         bool holding = IsHolding(i);
-        bool free = buttons["HAND"].on && i == 1;
+        bool free = FreeHand(i);
+        if (h.gripping && holding && h.mode != HandMode.Hold) SetMode(h, HandMode.Hold);
         Vector3 target;
         Quaternion targetRot = ct.rotation * Quaternion.Euler(25f, 0f, 0f);
         float follow = 18f;
@@ -542,7 +651,7 @@ public class FlatControls : MonoBehaviour
                 if (!holding && h.modeTime > 0.2f)
                 {
                     // the game took the item away (eaten, broken joint, put in a slot)
-                    h.input.Set(Flat_TrackedInputController.Btn.Grab, false);
+                    if (!h.gripping) h.input.Set(Flat_TrackedInputController.Btn.Grab, false);
                     SetMode(h, free ? HandMode.Free : HandMode.Rest);
                 }
                 break;
