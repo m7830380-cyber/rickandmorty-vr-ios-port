@@ -155,9 +155,12 @@ jobs:
             echo "no saved Library yet - full conversion this run"
           fi
           rm -rf /tmp/lib
+          # files Unity rewrites from here on (it upgrades the exported .meta files) are saved with the Library
+          touch /tmp/before-unity
           df -h / | tail -1
 
       - name: Unity build (Xcode project)
+        id: unity
         timeout-minutes: 240
         env:
           SHELL_OUT: ${{ github.workspace }}/xcode
@@ -165,6 +168,9 @@ jobs:
           set +e
           ci/unity.sh "$PWD/unity.log" 14000 "" -quit -projectPath "$PWD/private/project" -buildTarget iOS -executeMethod FlatBuild.Build
           rc=$?
+          imports=$(grep -c "^Start importing" unity.log)
+          echo "assets imported this run: $imports"
+          echo "imports=$imports" >> "$GITHUB_OUTPUT"
           echo "---- compiler errors (count by code)"
           grep -oE "error CS[0-9]+" unity.log | sort | uniq -c | sort -rn | head -n 20
           grep -E "error CS[0-9]+" unity.log | sed -E 's/^.*Assets\//Assets\//' | cut -c1-220 | sort -u | head -n 40
@@ -189,14 +195,17 @@ jobs:
 
       # First conversion (even if the player build fails afterwards): keep the Library for later runs (split under GitHub's 2 GB asset limit).
       - name: Save converted-asset Library (private repo)
-        if: always() && steps.library.outputs.restored != 'true' && hashFiles('private/project/Library/ArtifactDB') != ''
+        # also re-saved when a restored Library still needed many imports, so the next run starts from this one
+        if: always() && hashFiles('private/project/Library/ArtifactDB') != '' && (steps.library.outputs.restored != 'true' || steps.unity.outputs.imports > 1500)
         continue-on-error: true
         env:
           GH_TOKEN: ${{ secrets.PRIVATE_REPO_TOKEN }}
         run: |
           set -euo pipefail
           mkdir -p /tmp/libout
-          tar -C private/project --exclude Library/Il2cppBuildCache --exclude Library/Bee -cf - Library |
+          (cd private/project && find Assets -name '*.meta' -newer /tmp/before-unity) > /tmp/metas.txt
+          echo "meta files Unity rewrote: $(wc -l < /tmp/metas.txt)"
+          tar -C private/project --exclude Library/Il2cppBuildCache --exclude Library/Bee -cf - Library -T /tmp/metas.txt |
             zstd -3 -T0 --long=27 -q -c | split -b 1900m - /tmp/libout/library.tar.zst.part-
           du -sh /tmp/libout | awk '{print "Library upload", $1}'
           gh release view unity-library --repo "$PRIVATE_REPO" >/dev/null 2>&1 ||
